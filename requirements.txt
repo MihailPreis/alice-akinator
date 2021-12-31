@@ -1,0 +1,4 @@
+wheel==0.37.1
+gunicorn==20.1.0
+Flask==2.0.2
+akinator.py==5.0.0
