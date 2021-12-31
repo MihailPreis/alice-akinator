@@ -1,22 +1,14 @@
 # coding: utf-8
-"""
-Демонстрация навыка для Алисы где она будет угадывать персонажа.
-"""
 from __future__ import unicode_literals
 
-import json
+import codecs
+import pickle
+import random
 import logging
 import akinator
-import random
 
-from flask import Flask, request
-app = Flask(__name__)
+logging.getLogger().setLevel(logging.DEBUG)
 
-logging.basicConfig(level=logging.DEBUG)
-
-# Сессии
-sessionStorage = {}
-# Стандартные ответы
 suggests = [
     {'title': "Да", 'hide': True},
     {'title': "Нет", 'hide': True},
@@ -25,116 +17,108 @@ suggests = [
     {'title': "Наверно нет", 'hide': True},
     {'title': "Назад", 'hide': True}
 ]
-# Эффекты для повторения вопроса
+
 tts_effect = [
     "megaphone",
     "train_announce"
 ]
 
 
-@app.route("/", methods=['GET'])
-def index():
-    """Чек."""
-    return "OK"
-
-
-@app.route("/", methods=['POST'])
-def handler():
-    """Маппинг запроса навыка."""
-    logging.info('Request: %r', request.json)
-
+def handler(event, context):
     response = {
-        "version": request.json['version'],
-        "session": request.json['session'],
+        "version": event['version'],
+        "session": event['session'],
         "response": {
             "end_session": False
         }
     }
 
-    handle_dialog(request.json, response)
+    handle_dialog(event, event['state'], response)
 
-    logging.info('Response: %r', response)
+    logging.debug('Response: %r', response)
 
-    return json.dumps(
-        response,
-        ensure_ascii=False,
-        indent=2
-    )
+    return response
 
 
-def handle_dialog(req, res):
+def handle_dialog(req, state, res):
     """Функция для непосредственной обработки диалога."""
 
-    user_id = req['session']['user_id']
+    aki = None
+    state = state.get('session')
 
     # Обрабатываем новичка.
-    if req['session']['new'] or user_id not in sessionStorage:
-        sessionStorage[user_id] = {
-            'a': akinator.Akinator(),
-            'has_complete': False
-        }
+    if req['session']['new'] or not state:
+        aki = akinator.Akinator()
         _hi = "Это игра где я попытаюсь угадать персонажа, которого вы загадали. Итак, начнем: "
-        res['response']['text'] = _hi + sessionStorage[user_id]['a'].start_game(
-            language='ru')
+        # TODO: можно вытягивать локаль!
+        res['response']['text'] = _hi + aki.start_game(language='ru')
         res['response']['buttons'] = suggests
+        res['session_state'] = {
+            'a': codecs.encode(pickle.dumps(aki), "base64").decode(),
+            'complete': False
+        }
         return
+
+    aki = pickle.loads(codecs.decode(state['a'].encode(), "base64"))
 
     # Обрабатываем ответ пользователя.
     user_ans = normalize_answer(req['request']['original_utterance'].lower())
     logging.debug('Answer code: %r', user_ans)
 
-    _progression = sessionStorage[user_id]['a'].progression
-    _has_complete = sessionStorage[user_id]['has_complete']
-    if _progression > 80 and not _has_complete:
-        sessionStorage[user_id]['has_complete'] = True
-        first_guess = sessionStorage[user_id]['a'].win()
+    _progression = aki.progression
+    if _progression > 80 and not state['complete']:
+        state['complete'] = True
+        first_guess = aki.win()
         _name = first_guess['name']
         _desc = first_guess['description']
         res['response']['text'] = f'Это {_name}, {_desc}! Правильно?'
         res['response']['buttons'] = suggests[:2]
+        res['session_state'] = state
         return
 
     if user_ans is not None:
-        if sessionStorage[user_id]['has_complete']:
+        if state['complete']:
             if user_ans == 0:
                 res['response']['text'] = 'Вау, отлично! Спасибо за игру.'
                 res['response']['end_session'] = True
-                del sessionStorage[user_id]
+                return
             elif user_ans == 1:
                 _text = 'Ну вот... В следующий раз я подготовлюсь лучше! Спасибо за игру.'
                 res['response']['text'] = _text
                 res['response']['end_session'] = True
-                del sessionStorage[user_id]
+                return
             else:
                 res['response']['text'] = 'Я не поняла... Переформулируйте ответ.'
                 res['response']['buttons'] = suggests[:2]
         else:
             if user_ans == -1:
                 try:
-                    res['response']['text'] = sessionStorage[user_id]['a'].back()
+                    res['response']['text'] = aki.back()
                     res['response']['buttons'] = suggests
                 except:
-                    _ans = sessionStorage[user_id]['a'].question
+                    _ans = aki.question
                     res['response']['text'] = 'Некуда возвращаться... ' + _ans
                     res['response']['buttons'] = suggests
             elif user_ans == -2:
-                _question = sessionStorage[user_id]['a'].question
+                _question = aki.question
                 res['response']['text'] = _question
                 _e = random.choice(tts_effect)
                 res['response']['tts'] = f'<speaker effect="{_e}">{_question}'
                 res['response']['buttons'] = suggests
             else:
-                res['response']['text'] = sessionStorage[user_id]['a'].answer(
+                res['response']['text'] = aki.answer(
                     user_ans)
                 res['response']['buttons'] = suggests
     else:
         res['response']['text'] = 'Я не поняла... Переформулируйте ответ.'
         res['response']['buttons'] = suggests
+    state['a'] = codecs.encode(pickle.dumps(aki), "base64").decode()
+    res['session_state'] = state
 
 
 def normalize_answer(ans):
     """Нормализуем ответ пользователя к параметру акинатора."""
-    logging.info('Answer: %r', ans)
+    logging.debug('Answer: %r', ans)
     if ans in [
         "повтори",
         "еще раз",
@@ -190,7 +174,3 @@ def normalize_answer(ans):
     ]:
         return 4
     return None
-
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', threaded=True, port=14753)
