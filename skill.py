@@ -50,7 +50,7 @@ def handle_dialog(req, state, res):
     if req['session']['new'] or not state:
         aki = akinator.Akinator()
         _hi = "Это игра где я попытаюсь угадать персонажа, которого вы загадали. Итак, начнем: "
-        # TODO: можно вытягивать локаль!
+        # TODO: можно вытягивать локаль, но нужно все перевести :(
         res['response']['text'] = _hi + aki.start_game(language='ru')
         res['response']['buttons'] = suggests
         res['session_state'] = {
@@ -62,7 +62,7 @@ def handle_dialog(req, state, res):
     aki = pickle.loads(codecs.decode(state['a'].encode(), "base64"))
 
     # Обрабатываем ответ пользователя.
-    user_ans = normalize_answer(req['request']['original_utterance'].lower())
+    user_ans = convert_answer(req['request']['nlu']['intents'])
     logging.debug('Answer code: %r', user_ans)
 
     _progression = aki.progression
@@ -88,7 +88,7 @@ def handle_dialog(req, state, res):
                 res['response']['end_session'] = True
                 return
             else:
-                res['response']['text'] = 'Я не поняла... Переформулируйте ответ.'
+                res['response']['text'] = f'И все же? Правильно?'
                 res['response']['buttons'] = suggests[:2]
         else:
             if user_ans == -1:
@@ -110,67 +110,25 @@ def handle_dialog(req, state, res):
                     user_ans)
                 res['response']['buttons'] = suggests
     else:
-        res['response']['text'] = 'Я не поняла... Переформулируйте ответ.'
+        res['response']['text'] = f'И все же? {aki.question}'
         res['response']['buttons'] = suggests
     state['a'] = codecs.encode(pickle.dumps(aki), "base64").decode()
     res['session_state'] = state
 
-
-def normalize_answer(ans):
-    """Нормализуем ответ пользователя к параметру акинатора."""
-    logging.debug('Answer: %r', ans)
-    if ans in [
-        "повтори",
-        "еще раз",
-        "повтори вопрос",
-        "что"
-    ]:
+def convert_answer(intents):
+    """Функция конвертации интента в ответ для акинатора."""
+    if 'aki.repeat' in intents:
         return -2
-    if ans in [
-        "предыдущий вопрос",
-        "назад",
-        "вернись"
-    ]:
+    if 'aki.back' in intents or 'YANDEX.REPEAT' in intents:
         return -1
-    if ans in [
-        "да",
-        "точно",
-        "ага",
-        "именно"
-    ]:
+    if 'aki.yes' in intents or 'YANDEX.CONFIRM' in intents:
         return 0
-    if ans in [
-        "не",
-        "нет",
-        "неа",
-        "неверно"
-    ]:
+    if 'aki.no' in intents or 'YANDEX.REJECT' in intents:
         return 1
-    if ans in [
-        "хз",
-        "я не знаю",
-        "не знаю",
-        "без понятия",
-        "кто знает"
-    ]:
+    if 'aki.idk' in intents:
         return 2
-    if ans in [
-        "наверно",
-        "наверноe",
-        "быть может",
-        "может быть",
-        "кто знает",
-        "очень может быть",
-        "пожалуй",
-        "скорее всего",
-        "скорее всего да"
-    ]:
+    if 'aki.prob' in intents:
         return 3
-    if ans in [
-        "наврятли",
-        "наверно нет",
-        "скорее всего нет",
-        "нет наверное"
-    ]:
+    if 'aki.probnot' in intents:
         return 4
     return None
